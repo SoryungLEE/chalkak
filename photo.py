@@ -86,7 +86,7 @@ def show():
                 with col2:
                     thumb = img.copy()
                     thumb.thumbnail((400, 200))
-                    st.image(thumb, caption=name, use_container_width=False, width=300)
+                    st.image(thumb, caption=name, width="content", width=300)
 
         order_inputs = []
         for i, (name, img) in enumerate(raw_images):
@@ -137,7 +137,7 @@ def show():
 
     st.divider()
 
-    if st.button("📄 Word 문서 생성", type="primary", use_container_width=True):
+    if st.button("📄 Word 문서 생성", type="primary", width="stretch"):
         if not meeting_name.strip():
             st.error("⚠️ 회의명을 입력해주세요!")
         elif not images:
@@ -210,7 +210,7 @@ def show():
                         data=doc_buffer,
                         file_name=filename,
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True
+                        width="stretch"
                     )
                 except Exception as e:
                     st.error(f"오류: {str(e)}")

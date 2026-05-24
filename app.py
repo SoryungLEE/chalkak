@@ -51,16 +51,46 @@ def img_to_base64(img):
 
 
 # 사진 로드
-images = []
+raw_images = []
 if uploaded_files:
     for i, file in enumerate(uploaded_files):
         try:
             file.seek(0)
             img = Image.open(io.BytesIO(file.read()))
             img = fix_orientation(img)
-            images.append((i + 1, file.name, img))
+            raw_images.append((file.name, img))
         except:
             pass
+
+
+# 순서 입력
+images = []
+if raw_images:
+    st.divider()
+    st.subheader("🔢 사진 순서 설정")
+    st.caption("순서를 바꾸고 싶으면 번호를 수정하세요. 같은 번호면 업로드 순서대로 정렬됩니다.")
+
+    order_inputs = []
+    for i, (name, img) in enumerate(raw_images):
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            order = st.number_input(
+                f"순서",
+                min_value=1,
+                max_value=len(raw_images),
+                value=i + 1,
+                key=f"order_{i}",
+                label_visibility="collapsed"
+            )
+        with col2:
+            thumb = img.copy()
+            thumb.thumbnail((400, 200))
+            st.image(thumb, caption=name, use_container_width=False, width=300)
+        order_inputs.append((order, i, name, img))
+
+    # 순서대로 정렬
+    order_inputs.sort(key=lambda x: (x[0], x[1]))
+    images = [(idx + 1, name, img) for idx, (_, _, name, img) in enumerate(order_inputs)]
 
 
 # 문서 미리보기
@@ -74,7 +104,6 @@ if images and meeting_name.strip():
 
     html_pages = ""
     for page_idx, page_images in enumerate(pages):
-        # 첫 페이지에만 회의명 + 날짜
         header = ""
         if page_idx == 0:
             header = f"""
@@ -112,23 +141,14 @@ if images and meeting_name.strip():
             separator = """<div style="text-align:center; color:#bbb; margin:12px 0; font-size:11px;">— 페이지 나눔 —</div>"""
 
         html_pages += f"""
-        <div style="background:white; border:1px solid #ddd; border-radius:8px; padding:32px 40px 16px 40px; box-shadow:0 2px 8px rgba(0,0,0,0.08);">
-            {header}
-            {photos_html}
-            {page_num}
+        <div style="background:white; border:1px solid #ddd; border-radius:8px; padding:32px 40px 16px 40px; box-shadow:0 2px 8px rgba(0,0,0,0.08); margin-bottom:4px;">
+            {header}{photos_html}{page_num}
         </div>
         {separator}
         """
 
-    full_html = f"""
-    <html>
-    <body style="margin:0; padding:0; background:#f5f5f5;">
-        {html_pages}
-    </body>
-    </html>
-    """
-
-    total_height = len(pages) * (350 * PHOTOS_PER_PAGE + 200)
+    full_html = f"<html><body style='margin:0;padding:0;background:#f5f5f5;'>{html_pages}</body></html>"
+    total_height = len(pages) * (320 * PHOTOS_PER_PAGE + 200)
     components.html(full_html, height=min(total_height, 1200), scrolling=True)
 
 elif uploaded_files and not meeting_name.strip():
@@ -143,7 +163,7 @@ st.divider()
 if st.button("📄 Word 문서 생성", type="primary", use_container_width=True):
     if not meeting_name.strip():
         st.error("⚠️ 회의명을 입력해주세요!")
-    elif not uploaded_files:
+    elif not images:
         st.error("⚠️ 사진을 최소 1장 이상 업로드해주세요!")
     else:
         with st.spinner("문서를 생성하는 중..."):
@@ -155,7 +175,7 @@ if st.button("📄 Word 문서 생성", type="primary", use_container_width=True
                 section.left_margin = Inches(1)
                 section.right_margin = Inches(1)
 
-                # 첫 페이지 헤더 (회의명 + 날짜)
+                # 첫 페이지 헤더
                 title = doc.add_paragraph()
                 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 run = title.add_run(meeting_name.strip())

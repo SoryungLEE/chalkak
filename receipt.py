@@ -34,28 +34,27 @@ def read_receipt_with_ai(img):
                 },
                 {
                     "type": "text",
-                    "text": """이 영수증 또는 구매확인서 이미지에서 구매 항목을 추출해주세요.
-오프라인 영수증, 온라인 구매영수증, 네이버페이/카카오페이 결제내역 등 모든 형식을 지원합니다.
+                    "text": """이 이미지는 구매영수증입니다. 이미지에서 보이는 모든 텍스트를 먼저 읽고, 구매 항목 정보를 추출하세요.
 
 반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트는 절대 포함하지 마세요.
 
 {
-  "store": "거래처명 또는 판매자명 또는 회사명",
-  "date": "구매날짜 (YYYY-MM-DD 형식, 모르면 빈 문자열)",
+  "store": "거래처명(회사명/판매자명/가게명 중 보이는 것)",
+  "date": "구매날짜 YYYY-MM-DD 형식 (주문날짜/결제일/구매일 중 보이는 것, 없으면 빈 문자열)",
   "items": [
-    {"name": "물품명(상품명 전체)", "spec": "규격(모델명/사이즈/용량 등, 없으면 빈 문자열)", "quantity": 수량(숫자), "unit_price": 단가(숫자), "amount": 금액(숫자)}
+    {"name": "물품명", "spec": "규격(모델명/사이즈 등, 없으면 빈 문자열)", "quantity": 수량숫자, "unit_price": 단가숫자, "amount": 금액숫자}
   ]
 }
 
-추출 규칙:
-- 상품명/품목명/물품명/아이템명 등 어떤 표현이든 물품명으로 추출
-- 회사명/판매자/거래처/가게명 등 어떤 표현이든 거래처명으로 추출
-- 주문날짜/결제일/구매일 등 어떤 표현이든 날짜로 추출
-- 수량이 상품명 끝에 붙어있으면(예: '칫솔 2개') 수량을 분리해서 추출
-- 수량 불명확하면 1로 설정
-- 금액은 숫자만 (원, 콤마 제외)
-- 규격은 모델번호/사이즈/용량 등, 없으면 빈 문자열
-- 합계/배송비는 items에 포함하지 말것"""
+중요 규칙:
+- 상품명/품목/아이템 어떤 표현이든 물품명으로 추출할 것
+- 상품명 끝에 수량이 붙어있으면(예: '칫솔 2개') 수량 분리해서 추출
+- 단가/금액을 알 수 없으면 합계금액을 amount에 넣고 unit_price도 동일하게
+- 수량 모르면 1
+- 금액은 숫자만 (원, 콤마 없이)
+- 합계/배송비는 items에 포함 금지
+- 이미지에 구매 정보가 하나라도 있으면 반드시 items에 1개 이상 넣을 것
+- items가 빈 배열이면 절대 안됨"""
                 }
             ]
         }]
@@ -67,11 +66,15 @@ def read_receipt_with_ai(img):
             json=payload,
             timeout=30
         )
-        text = res.json()["content"][0]["text"].strip()
+        res_json = res.json()
+        if "content" not in res_json:
+            return None, f"API 오류: {str(res_json)[:200]}"
+        text = res_json["content"][0]["text"].strip()
         text = text.replace("```json", "").replace("```", "").strip()
-        return json.loads(text)
-    except:
-        return None
+        parsed = json.loads(text)
+        return parsed, None
+    except Exception as e:
+        return None, str(e)
 
 
 def show():
@@ -116,12 +119,12 @@ def show():
 
         col_img, col_btn = st.columns([2, 1])
         with col_img:
-            st.image(img, caption=uploaded_file.name, use_container_width=True)
+            st.image(img, caption=uploaded_file.name, width="stretch")
         with col_btn:
             st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-            if st.button("🤖 AI 분석하기", type="primary", use_container_width=True):
+            if st.button("🤖 AI 분석하기", type="primary", width="stretch"):
                 with st.spinner("AI가 영수증을 읽는 중..."):
-                    result = read_receipt_with_ai(img)
+                    result, err = read_receipt_with_ai(img)
                     if result and result.get("items"):
                         st.session_state.receipt_items = [
                             {
@@ -137,7 +140,9 @@ def show():
                         st.session_state.analyzed = True
                         st.success(f"✅ {len(st.session_state.receipt_items)}개 항목을 읽었어요!")
                     else:
-                        st.error("❌ 항목을 읽지 못했어요. 사진을 다시 확인해주세요.")
+                        st.error(f"❌ 항목을 읽지 못했어요.")
+                        if err:
+                            st.caption(f"오류 상세: {err}")
 
     # 항목 수정 테이블
     if st.session_state.analyzed and st.session_state.receipt_items:
@@ -209,7 +214,7 @@ def show():
 
         st.divider()
 
-        if st.button("📄 Word 문서 생성", type="primary", use_container_width=True):
+        if st.button("📄 Word 문서 생성", type="primary", width="stretch"):
             if not report_title.strip():
                 st.error("⚠️ 보고서 제목을 입력해주세요!")
             else:
@@ -307,7 +312,7 @@ def show():
                             data=doc_buffer,
                             file_name=filename,
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            use_container_width=True
+                            width="stretch"
                         )
                     except Exception as e:
                         st.error(f"오류: {str(e)}")

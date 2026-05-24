@@ -68,28 +68,43 @@ if uploaded_files:
 images = []
 if raw_images:
     st.divider()
-    st.subheader("🔢 사진 순서 설정")
-    st.caption("순서를 바꾸고 싶으면 번호를 수정하세요. 같은 번호면 업로드 순서대로 정렬됩니다.")
 
+    # 토글 버튼으로 열고 닫기
+    if "show_order" not in st.session_state:
+        st.session_state.show_order = False
+
+    if st.button("🔢 사진 순서 변경" + (" ▲ 닫기" if st.session_state.show_order else " ▼ 펼치기")):
+        st.session_state.show_order = not st.session_state.show_order
+
+    # 순서값 저장
+    if "order_values" not in st.session_state:
+        st.session_state.order_values = {}
+
+    if st.session_state.show_order:
+        st.caption("순서를 바꾸고 싶으면 번호를 수정하세요. 같은 번호면 업로드 순서대로 정렬됩니다.")
+        for i, (name, img) in enumerate(raw_images):
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                order = st.number_input(
+                    f"순서",
+                    min_value=1,
+                    max_value=len(raw_images),
+                    value=st.session_state.order_values.get(i, i + 1),
+                    key=f"order_{i}",
+                    label_visibility="collapsed"
+                )
+                st.session_state.order_values[i] = order
+            with col2:
+                thumb = img.copy()
+                thumb.thumbnail((400, 200))
+                st.image(thumb, caption=name, use_container_width=False, width=300)
+
+    # 순서 정렬 (토글 닫혀있어도 저장된 값 적용)
     order_inputs = []
     for i, (name, img) in enumerate(raw_images):
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            order = st.number_input(
-                f"순서",
-                min_value=1,
-                max_value=len(raw_images),
-                value=i + 1,
-                key=f"order_{i}",
-                label_visibility="collapsed"
-            )
-        with col2:
-            thumb = img.copy()
-            thumb.thumbnail((400, 200))
-            st.image(thumb, caption=name, use_container_width=False, width=300)
+        order = st.session_state.order_values.get(i, i + 1)
         order_inputs.append((order, i, name, img))
 
-    # 순서대로 정렬
     order_inputs.sort(key=lambda x: (x[0], x[1]))
     images = [(idx + 1, name, img) for idx, (_, _, name, img) in enumerate(order_inputs)]
 

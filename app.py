@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -49,7 +50,7 @@ def img_to_base64(img):
     return base64.b64encode(buf.getvalue()).decode()
 
 
-# 사진 로드 및 캐싱
+# 사진 로드
 images = []
 if uploaded_files:
     for i, file in enumerate(uploaded_files):
@@ -69,62 +70,69 @@ if images and meeting_name.strip():
 
     date_str = meeting_date.strftime("%Y년 %m월 %d일")
     PHOTOS_PER_PAGE = 3
-
-    # 페이지 나누기
     pages = [images[i:i+PHOTOS_PER_PAGE] for i in range(0, len(images), PHOTOS_PER_PAGE)]
 
+    html_pages = ""
     for page_idx, page_images in enumerate(pages):
-        # 페이지 헤더
-        header_html = f"""
-        <div style="
-            background: white;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 32px 40px 16px 40px;
-            margin-bottom: 4px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        ">
-            <div style="text-align:center; margin-bottom: 6px;">
-                <span style="font-size:22px; font-weight:700; color:#1a1a2e; font-family: 'Malgun Gothic', sans-serif;">
+        # 첫 페이지에만 회의명 + 날짜
+        header = ""
+        if page_idx == 0:
+            header = f"""
+            <div style="text-align:center; margin-bottom:6px;">
+                <span style="font-size:22px; font-weight:700; color:#1a1a2e; font-family:'Malgun Gothic',sans-serif;">
                     {meeting_name.strip()}
                 </span>
             </div>
-            <div style="text-align:center; margin-bottom: 20px;">
-                <span style="font-size:12px; color:#888; font-family: 'Malgun Gothic', sans-serif;">
+            <div style="text-align:center; margin-bottom:24px;">
+                <span style="font-size:12px; color:#888; font-family:'Malgun Gothic',sans-serif;">
                     {date_str}
                 </span>
             </div>
-        """
+            """
 
-        # 사진들
         photos_html = ""
-        for idx, (num, name, img) in enumerate(page_images):
+        for num, name, img in page_images:
             b64 = img_to_base64(img)
             photos_html += f"""
-            <div style="text-align:center; margin-bottom: 20px;">
+            <div style="text-align:center; margin-bottom:20px;">
                 <img src="data:image/jpeg;base64,{b64}"
-                     style="max-width:100%; max-height:300px; object-fit:contain; border-radius:4px; box-shadow: 0 1px 4px rgba(0,0,0,0.12);">
-                <div style="margin-top:6px; font-size:11px; color:#aaa; font-family: 'Malgun Gothic', sans-serif;">
-                    사진 {num}
-                </div>
+                     style="max-width:100%; max-height:280px; object-fit:contain; border-radius:4px; box-shadow:0 1px 4px rgba(0,0,0,0.12);">
+                <div style="margin-top:6px; font-size:11px; color:#aaa; font-family:'Malgun Gothic',sans-serif;">사진 {num}</div>
             </div>
             """
 
-        footer_html = f"""
-            <div style="text-align:right; font-size:10px; color:#ccc; margin-top:8px; font-family: 'Malgun Gothic', sans-serif;">
-                {page_idx+1} / {len(pages)}
-            </div>
+        page_num = f"""
+        <div style="text-align:right; font-size:10px; color:#ccc; margin-top:4px; font-family:'Malgun Gothic',sans-serif;">
+            {page_idx+1} / {len(pages)}
         </div>
         """
 
-        st.markdown(header_html + photos_html + footer_html, unsafe_allow_html=True)
-
+        separator = ""
         if page_idx < len(pages) - 1:
-            st.markdown("<div style='text-align:center; color:#bbb; margin: 8px 0; font-size:12px;'>— 페이지 나눔 —</div>", unsafe_allow_html=True)
+            separator = """<div style="text-align:center; color:#bbb; margin:12px 0; font-size:11px;">— 페이지 나눔 —</div>"""
+
+        html_pages += f"""
+        <div style="background:white; border:1px solid #ddd; border-radius:8px; padding:32px 40px 16px 40px; box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+            {header}
+            {photos_html}
+            {page_num}
+        </div>
+        {separator}
+        """
+
+    full_html = f"""
+    <html>
+    <body style="margin:0; padding:0; background:#f5f5f5;">
+        {html_pages}
+    </body>
+    </html>
+    """
+
+    total_height = len(pages) * (350 * PHOTOS_PER_PAGE + 200)
+    components.html(full_html, height=min(total_height, 1200), scrolling=True)
 
 elif uploaded_files and not meeting_name.strip():
     st.info("💡 회의명을 입력하면 문서 미리보기가 표시됩니다.")
-
 elif meeting_name.strip() and not uploaded_files:
     st.info("💡 사진을 업로드하면 문서 미리보기가 표시됩니다.")
 
@@ -147,23 +155,20 @@ if st.button("📄 Word 문서 생성", type="primary", use_container_width=True
                 section.left_margin = Inches(1)
                 section.right_margin = Inches(1)
 
-                def add_header(doc):
-                    title = doc.add_paragraph()
-                    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    run = title.add_run(meeting_name.strip())
-                    run.bold = True
-                    run.font.size = Pt(22)
-                    run.font.color.rgb = RGBColor(0x1a, 0x1a, 0x2e)
+                # 첫 페이지 헤더 (회의명 + 날짜)
+                title = doc.add_paragraph()
+                title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = title.add_run(meeting_name.strip())
+                run.bold = True
+                run.font.size = Pt(22)
+                run.font.color.rgb = RGBColor(0x1a, 0x1a, 0x2e)
 
-                    date_str = meeting_date.strftime("%Y년 %m월 %d일")
-                    date_p = doc.add_paragraph()
-                    date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    date_run = date_p.add_run(date_str)
-                    date_run.font.size = Pt(11)
-                    date_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
-                    doc.add_paragraph()
-
-                add_header(doc)
+                date_p = doc.add_paragraph()
+                date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                date_run = date_p.add_run(meeting_date.strftime("%Y년 %m월 %d일"))
+                date_run.font.size = Pt(11)
+                date_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+                doc.add_paragraph()
 
                 PHOTOS_PER_PAGE = 3
                 page_width = Inches(6.0)
@@ -187,8 +192,7 @@ if st.button("📄 Word 문서 생성", type="primary", use_container_width=True
 
                         p = doc.add_paragraph()
                         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        run = p.add_run()
-                        run.add_picture(buf, width=img_width)
+                        p.add_run().add_picture(buf, width=img_width)
 
                         caption = doc.add_paragraph(f"사진 {num}")
                         caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -198,9 +202,8 @@ if st.button("📄 Word 문서 생성", type="primary", use_container_width=True
 
                         if (i + 1) % PHOTOS_PER_PAGE == 0 and (i + 1) < len(images):
                             doc.add_page_break()
-                            add_header(doc)
 
-                    except Exception as e:
+                    except:
                         doc.add_paragraph(f"[이미지 로드 실패: {name}]")
 
                 doc_buffer = io.BytesIO()

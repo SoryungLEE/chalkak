@@ -15,6 +15,7 @@ st.set_page_config(
 )
 
 st.title("📋 회의 사진 대지 생성기")
+st.caption("made by 찰칵혁신단")
 st.markdown("회의 정보를 입력하고 사진을 업로드하면 Word 문서를 자동으로 만들어드려요.")
 
 st.divider()

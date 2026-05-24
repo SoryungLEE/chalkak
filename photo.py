@@ -86,7 +86,7 @@ def show():
                 with col2:
                     thumb = img.copy()
                     thumb.thumbnail((400, 200))
-                    st.image(thumb, caption=name, width="content", width=300)
+                    st.image(thumb, caption=name, width=300)
 
         order_inputs = []
         for i, (name, img) in enumerate(raw_images):

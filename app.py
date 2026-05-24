@@ -51,7 +51,7 @@ if uploaded_files:
             try:
                 img = Image.open(file)
                 img = fix_orientation(img)
-                st.image(img, caption=f"{i+1}. {file.name}", use_container_width=True)
+                st.image(img, caption=f"사진{i+1}", use_container_width=True)
             except:
                 st.warning(f"미리보기 불가: {file.name}")
 

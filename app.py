@@ -81,7 +81,7 @@ else:
             <div class="card-desc">회의 사진을 업로드하면<br>Word 문서로 자동 정리</div>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("사진 대지 만들기 →", use_container_width=True, key="btn_photo"):
+        if st.button("사진 대지 만들기 →", width="stretch", key="btn_photo"):
             st.session_state.page = "photo"
             st.rerun()
 
@@ -93,7 +93,7 @@ else:
             <div class="card-desc">영수증 사진을 올리면<br>AI가 항목을 읽어 표로 정리</div>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("물품보고서 만들기 →", use_container_width=True, key="btn_receipt"):
+        if st.button("물품보고서 만들기 →", width="stretch", key="btn_receipt"):
             st.session_state.page = "receipt"
             st.rerun()
 

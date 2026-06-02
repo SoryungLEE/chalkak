@@ -22,15 +22,21 @@ def img_to_base64(img):
 
 def read_receipt_with_ai(img):
     b64 = img_to_base64(img)
+
+    # Streamlit secrets에서 OpenAI API 키 가져오기
+    api_key = st.secrets["OPENAI_API_KEY"]
+
     payload = {
-        "model": "claude-sonnet-4-20250514",
+        "model": "gpt-4o",
         "max_tokens": 1000,
         "messages": [{
             "role": "user",
             "content": [
                 {
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{b64}"
+                    }
                 },
                 {
                     "type": "text",
@@ -59,17 +65,21 @@ def read_receipt_with_ai(img):
             ]
         }]
     }
+
     try:
         res = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"Content-Type": "application/json"},
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}"
+            },
             json=payload,
             timeout=30
         )
         res_json = res.json()
-        if "content" not in res_json:
+        if "choices" not in res_json:
             return None, f"API 오류: {str(res_json)[:200]}"
-        text = res_json["content"][0]["text"].strip()
+        text = res_json["choices"][0]["message"]["content"].strip()
         text = text.replace("```json", "").replace("```", "").strip()
         parsed = json.loads(text)
         return parsed, None
@@ -276,7 +286,6 @@ def show():
                         items = st.session_state.receipt_items
                         for i, item in enumerate(items):
                             row = table.add_row()
-                            # 날짜 포맷 변환
                             try:
                                 d = datetime.strptime(item["구매날짜"], "%Y-%m-%d")
                                 date_str = d.strftime("%Y.%m.%d")

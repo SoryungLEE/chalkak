@@ -12,11 +12,33 @@ import requests
 from datetime import datetime
 
 
+def fix_orientation(img):
+    try:
+        exif_data = img._getexif()
+        if exif_data and 274 in exif_data:
+            orientation = exif_data[274]
+            rotations = {3: 180, 6: 270, 8: 90}
+            if orientation in rotations:
+                img = img.rotate(rotations[orientation], expand=True)
+    except:
+        pass
+    return img
+
+
 def img_to_base64(img):
+    img = fix_orientation(img)
+
+    # 너무 크면 리사이즈 (긴 쪽 2000px로 제한, 화질 유지)
+    max_side = 2000
+    w, h = img.size
+    if max(w, h) > max_side:
+        ratio = max_side / max(w, h)
+        img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+
     buf = io.BytesIO()
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
-    img.save(buf, format="JPEG", quality=85)
+    img.save(buf, format="JPEG", quality=90)
     return base64.b64encode(buf.getvalue()).decode()
 
 
@@ -40,7 +62,7 @@ def read_receipt_with_ai(img):
                 },
                 {
                     "type": "text",
-                    "text": """이 이미지는 구매영수증입니다. 이미지에서 보이는 모든 텍스트를 먼저 읽고, 구매 항목 정보를 추출하세요.
+                    "text": """이 이미지는 한국어 구매영수증입니다. 이미지가 회전되어 있거나 기울어져 있어도 모든 방향의 텍스트를 읽어주세요. 이미지에서 보이는 모든 텍스트를 먼저 읽고, 구매 항목 정보를 추출하세요.
 
 반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트는 절대 포함하지 마세요.
 

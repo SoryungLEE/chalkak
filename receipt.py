@@ -20,8 +20,15 @@ def fix_orientation(img):
             rotations = {3: 180, 6: 270, 8: 90}
             if orientation in rotations:
                 img = img.rotate(rotations[orientation], expand=True)
+                return img
     except:
         pass
+
+    # EXIF 없을 때 — 가로가 세로보다 길면 영수증이 누운 것으로 판단해 90도 회전
+    w, h = img.size
+    if w > h:
+        img = img.rotate(90, expand=True)
+
     return img
 
 
@@ -219,6 +226,7 @@ def show():
             st.caption("내용을 모두 확인했으면 맨 아래 체크박스를 체크해주세요.")
 
         # 헤더
+        # 물품명, 규격, 단위, 수량, 단가, 금액, 통화, 검사항목, 검사결과, 비고, 삭제
         cols_w = [2.2, 1.5, 0.8, 0.7, 1.2, 1.2, 1.0, 2.2, 1.5, 1.5, 0.6]
         h_labels = ["물품명", "규격", "단위", "수량", "단가", "금액", "통화", "검사항목", "검사결과", "비고", ""]
         hcols = st.columns(cols_w)
@@ -404,7 +412,7 @@ def show():
                                 f"{int(item['단가']):,}",
                                 f"{int(item['금액']):,}",
                                 item["통화"],
-                                item["검사항목"],
+                                item["검사항목"].replace("물품수량 및 상태 등", "물품수량 및 상태 등"),
                                 item["검사결과"],
                                 insp_date,
                                 item["비고"],

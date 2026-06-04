@@ -20,15 +20,8 @@ def fix_orientation(img):
             rotations = {3: 180, 6: 270, 8: 90}
             if orientation in rotations:
                 img = img.rotate(rotations[orientation], expand=True)
-                return img
     except:
         pass
-
-    # EXIF 없을 때 — 가로가 세로보다 길면 영수증이 누운 것으로 판단해 90도 회전
-    w, h = img.size
-    if w > h:
-        img = img.rotate(90, expand=True)
-
     return img
 
 
@@ -64,7 +57,7 @@ def read_receipt_with_ai(img):
                 },
                 {
                     "type": "text",
-                    "text": """이 이미지는 한국어 구매영수증입니다. 이미지가 회전되어 있거나 기울어져 있어도 모든 방향의 텍스트를 읽어주세요. 이미지에서 보이는 모든 텍스트를 먼저 읽고, 구매 항목 정보를 추출하세요.
+                    "text": """이 이미지는 한국어 구매영수증입니다. 이미지가 가로로 눕혀져 있거나 뒤집혀 있을 수 있으니 90도, 180도, 270도 모든 방향으로 돌려서 읽어주세요. 텍스트가 어느 방향을 향하든 반드시 모두 읽어야 합니다. 이미지에서 보이는 모든 텍스트를 먼저 읽고, 구매 항목 정보를 추출하세요.
 
 반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트는 절대 포함하지 마세요.
 

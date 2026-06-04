@@ -3,7 +3,7 @@ import streamlit as st
 st.set_page_config(
     page_title="찰칵혁신단 문서 도우미",
     page_icon="⚡",
-    layout="centered"
+    layout="wide"
 )
 
 if "page" not in st.session_state:

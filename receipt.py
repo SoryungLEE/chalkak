@@ -145,17 +145,32 @@ def show():
         st.session_state.receipt_meta = {"store": "", "date": ""}
         st.session_state.analyzed = False
         st.session_state.confirmed = False
+        st.session_state.img_rotation = 0
         st.session_state.last_uploaded = current_name
+
+    if "img_rotation" not in st.session_state:
+        st.session_state.img_rotation = 0
 
     if uploaded_file:
         uploaded_file.seek(0)
-        img = Image.open(io.BytesIO(uploaded_file.read()))
+        img_orig = Image.open(io.BytesIO(uploaded_file.read()))
+
+        # 회전 적용
+        rotation = st.session_state.img_rotation
+        if rotation != 0:
+            img = img_orig.rotate(-rotation, expand=True)
+        else:
+            img = img_orig
 
         col_img, col_btn = st.columns([2, 1])
         with col_img:
             st.image(img, caption=uploaded_file.name, width="stretch")
         with col_btn:
             st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+            if st.button("🔄 90도 회전", width="stretch"):
+                st.session_state.img_rotation = (st.session_state.img_rotation + 90) % 360
+                st.rerun()
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
             if st.button("🤖 AI 분석하기", type="primary", width="stretch"):
                 with st.spinner("AI가 영수증을 읽는 중..."):
                     result, err = read_receipt_with_ai(img)

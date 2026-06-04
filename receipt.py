@@ -28,7 +28,6 @@ def fix_orientation(img):
 def img_to_base64(img):
     img = fix_orientation(img)
 
-    # 너무 크면 리사이즈 (긴 쪽 2000px로 제한, 화질 유지)
     max_side = 2000
     w, h = img.size
     if max(w, h) > max_side:
@@ -44,21 +43,17 @@ def img_to_base64(img):
 
 def read_receipt_with_ai(img):
     b64 = img_to_base64(img)
-
-    # Streamlit secrets에서 OpenAI API 키 가져오기
     api_key = st.secrets["OPENAI_API_KEY"]
 
     payload = {
         "model": "gpt-4o",
-        "max_tokens": 1000,
+        "max_tokens": 1500,
         "messages": [{
             "role": "user",
             "content": [
                 {
                     "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{b64}"
-                    }
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
                 },
                 {
                     "type": "text",
@@ -77,7 +72,8 @@ def read_receipt_with_ai(img):
 중요 규칙:
 - 상품명/품목/아이템 어떤 표현이든 물품명으로 추출할 것
 - 상품명 끝에 수량이 붙어있으면(예: '칫솔 2개') 수량 분리해서 추출
-- 단가/금액을 알 수 없으면 합계금액을 amount에 넣고 unit_price도 동일하게
+- unit_price는 단가, amount는 단가×수량
+- 단가를 알 수 없으면 합계금액÷수량으로 계산
 - 수량 모르면 1
 - 금액은 숫자만 (원, 콤마 없이)
 - 합계/배송비는 items에 포함 금지
@@ -134,15 +130,21 @@ def show():
 
     if "receipt_items" not in st.session_state:
         st.session_state.receipt_items = []
+    if "receipt_meta" not in st.session_state:
+        st.session_state.receipt_meta = {"store": "", "date": ""}
     if "last_uploaded" not in st.session_state:
         st.session_state.last_uploaded = None
     if "analyzed" not in st.session_state:
         st.session_state.analyzed = False
+    if "confirmed" not in st.session_state:
+        st.session_state.confirmed = False
 
     current_name = uploaded_file.name if uploaded_file else None
     if current_name != st.session_state.last_uploaded:
         st.session_state.receipt_items = []
+        st.session_state.receipt_meta = {"store": "", "date": ""}
         st.session_state.analyzed = False
+        st.session_state.confirmed = False
         st.session_state.last_uploaded = current_name
 
     if uploaded_file:
@@ -158,96 +160,158 @@ def show():
                 with st.spinner("AI가 영수증을 읽는 중..."):
                     result, err = read_receipt_with_ai(img)
                     if result and result.get("items"):
+                        st.session_state.receipt_meta = {
+                            "store": result.get("store", ""),
+                            "date": result.get("date", ""),
+                        }
                         st.session_state.receipt_items = [
                             {
-                                "구매날짜": result.get("date", ""),
                                 "물품명": item.get("name", ""),
                                 "규격": item.get("spec", "") or "-",
+                                "단위": "개",
                                 "수량": item.get("quantity", 1),
-                                "거래처명": result.get("store", ""),
-                                "구매자명": "",
+                                "단가": item.get("unit_price", 0),
+                                "금액": item.get("amount", 0),
+                                "통화": "KRW",
+                                "검사항목": "물품수량 및 상태 등",
+                                "검사결과": "이상없음",
+                                "비고": "",
                             }
                             for item in result["items"]
                         ]
                         st.session_state.analyzed = True
+                        st.session_state.confirmed = False
                         st.success(f"✅ {len(st.session_state.receipt_items)}개 항목을 읽었어요!")
                     else:
-                        st.error(f"❌ 항목을 읽지 못했어요.")
+                        st.error("❌ 항목을 읽지 못했어요.")
                         if err:
                             st.caption(f"오류 상세: {err}")
 
-    # 항목 수정 테이블
+    # ── 헤더 정보 (구매날짜, 거래처, 구매자명) ──
     if st.session_state.analyzed and st.session_state.receipt_items:
         st.divider()
-        st.subheader("📝 항목 확인 및 수정")
-        st.caption("내용을 확인하고 필요하면 수정하세요. 구매자명을 꼭 입력해주세요.")
+        st.subheader("📋 기본 정보")
+
+        meta = st.session_state.receipt_meta
+        try:
+            meta_date = datetime.strptime(meta["date"], "%Y-%m-%d").date()
+        except:
+            meta_date = datetime.today().date()
+
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            purchase_date = st.date_input("구매날짜", value=meta_date, key="meta_date", disabled=st.session_state.confirmed)
+        with col_b:
+            store_name = st.text_input("거래처명", value=meta["store"], key="meta_store", disabled=st.session_state.confirmed)
+        with col_c:
+            buyer_name = st.text_input("구매자명", value="K-water", key="meta_buyer", disabled=st.session_state.confirmed)
+
+        # ── 항목 표 ──
+        st.divider()
+
+        locked = st.session_state.confirmed
+
+        # 잠금 상태 배너
+        if locked:
+            st.success("✅ 내용이 확인되었습니다. 수정하려면 '잠금 해제'를 눌러주세요.")
+        else:
+            st.subheader("📝 항목 확인 및 수정")
+            st.caption("내용을 모두 확인했으면 맨 아래 체크박스를 체크해주세요.")
 
         # 헤더
-        h1, h2, h3, h4, h5, h6, h7 = st.columns([1.8, 2.5, 1.5, 1, 1.8, 1.8, 0.6])
-        h1.markdown("**구매날짜**")
-        h2.markdown("**물품명**")
-        h3.markdown("**규격**")
-        h4.markdown("**수량**")
-        h5.markdown("**거래처명**")
-        h6.markdown("**구매자명**")
+        cols_w = [2.2, 1.5, 0.8, 0.7, 1.2, 1.2, 1.0, 2.2, 1.5, 1.5, 0.6]
+        h_labels = ["물품명", "규격", "단위", "수량", "단가", "금액", "통화", "검사항목", "검사결과", "비고", ""]
+        hcols = st.columns(cols_w)
+        for hc, hl in zip(hcols, h_labels):
+            hc.markdown(f"**{hl}**")
 
         items = st.session_state.receipt_items
         updated_items = []
         to_delete = []
 
         for i, item in enumerate(items):
-            c1, c2, c3, c4, c5, c6, c7 = st.columns([1.8, 2.5, 1.5, 1, 1.8, 1.8, 0.6])
-            with c1:
-                date_val = item["구매날짜"]
-                try:
-                    date_obj = datetime.strptime(date_val, "%Y-%m-%d").date()
-                except:
-                    date_obj = datetime.today().date()
-                purchase_date = st.date_input("구매날짜", value=date_obj, key=f"date_{i}", label_visibility="collapsed")
-            with c2:
-                name = st.text_input("물품명", value=item["물품명"], key=f"name_{i}", label_visibility="collapsed")
-            with c3:
-                spec = st.text_input("규격", value=item["규격"], key=f"spec_{i}", label_visibility="collapsed")
-            with c4:
-                qty = st.number_input("수량", value=int(item["수량"]), min_value=1, key=f"qty_{i}", label_visibility="collapsed")
-            with c5:
-                store = st.text_input("거래처명", value=item["거래처명"], key=f"store_{i}", label_visibility="collapsed")
-            with c6:
-                buyer = st.text_input("구매자명", value=item["구매자명"], placeholder="입력", key=f"buyer_{i}", label_visibility="collapsed")
-            with c7:
-                if st.button("🗑️", key=f"del_{i}"):
-                    to_delete.append(i)
+            c = st.columns(cols_w)
+            with c[0]:
+                name = st.text_input("물품명", value=item["물품명"], key=f"name_{i}", label_visibility="collapsed", disabled=locked)
+            with c[1]:
+                spec = st.text_input("규격", value=item["규격"], key=f"spec_{i}", label_visibility="collapsed", disabled=locked)
+            with c[2]:
+                unit = st.text_input("단위", value=item["단위"], key=f"unit_{i}", label_visibility="collapsed", disabled=locked)
+            with c[3]:
+                qty = st.number_input("수량", value=int(item["수량"]), min_value=1, key=f"qty_{i}", label_visibility="collapsed", disabled=locked)
+            with c[4]:
+                unit_price = st.number_input("단가", value=int(item["단가"]), min_value=0, key=f"uprice_{i}", label_visibility="collapsed", disabled=locked)
+            with c[5]:
+                amount = unit_price * qty
+                st.markdown(f"<div style='padding-top:8px'>{amount:,}</div>", unsafe_allow_html=True)
+            with c[6]:
+                currency = st.text_input("통화", value=item["통화"], key=f"curr_{i}", label_visibility="collapsed", disabled=locked)
+            with c[7]:
+                insp_item = st.text_input("검사항목", value=item["검사항목"], key=f"insp_{i}", label_visibility="collapsed", disabled=locked)
+            with c[8]:
+                insp_result = st.text_input("검사결과", value=item["검사결과"], key=f"iresult_{i}", label_visibility="collapsed", disabled=locked)
+            with c[9]:
+                note = st.text_input("비고", value=item["비고"], key=f"note_{i}", label_visibility="collapsed", disabled=locked)
+            with c[10]:
+                if not locked:
+                    if st.button("🗑️", key=f"del_{i}"):
+                        to_delete.append(i)
 
             updated_items.append({
-                "구매날짜": purchase_date.strftime("%Y-%m-%d"),
                 "물품명": name,
                 "규격": spec if spec.strip() else "-",
+                "단위": unit,
                 "수량": qty,
-                "거래처명": store,
-                "구매자명": buyer,
+                "단가": unit_price,
+                "금액": amount,
+                "통화": currency,
+                "검사항목": insp_item,
+                "검사결과": insp_result,
+                "검사일자": purchase_date.strftime("%Y-%m-%d"),
+                "비고": note,
             })
 
         if to_delete:
-            st.session_state.receipt_items = [item for i, item in enumerate(updated_items) if i not in to_delete]
+            st.session_state.receipt_items = [it for idx, it in enumerate(updated_items) if idx not in to_delete]
             st.rerun()
         else:
             st.session_state.receipt_items = updated_items
 
-        if st.button("➕ 항목 추가"):
-            st.session_state.receipt_items.append({
-                "구매날짜": datetime.today().strftime("%Y-%m-%d"),
-                "물품명": "",
-                "규격": "-",
-                "수량": 1,
-                "거래처명": "",
-                "구매자명": "",
-            })
-            st.rerun()
+        if not locked:
+            if st.button("➕ 항목 추가"):
+                st.session_state.receipt_items.append({
+                    "물품명": "",
+                    "규격": "-",
+                    "단위": "개",
+                    "수량": 1,
+                    "단가": 0,
+                    "금액": 0,
+                    "통화": "KRW",
+                    "검사항목": "물품수량 및 상태 등",
+                    "검사결과": "이상없음",
+                    "검사일자": purchase_date.strftime("%Y-%m-%d"),
+                    "비고": "",
+                })
+                st.rerun()
+
+        # ── 확인 체크박스 / 잠금 해제 버튼 ──
+        st.divider()
+        if not locked:
+            confirmed = st.checkbox("✅ 위 내용이 모두 정확함을 확인했습니다. (체크 시 수정 불가)")
+            if confirmed:
+                st.session_state.confirmed = True
+                st.rerun()
+        else:
+            if st.button("🔓 잠금 해제 (내용 수정하기)"):
+                st.session_state.confirmed = False
+                st.rerun()
 
         st.divider()
 
-        if st.button("📄 Word 문서 생성", type="primary", width="stretch"):
-            if not report_title.strip():
+        if st.button("📄 Word 문서 생성", type="primary", width="stretch", disabled=not st.session_state.confirmed):
+            if not st.session_state.confirmed:
+                st.warning("⚠️ 내용 확인 체크박스를 먼저 체크해주세요.")
+            elif not report_title.strip():
                 st.error("⚠️ 보고서 제목을 입력해주세요!")
             else:
                 with st.spinner("문서를 생성하는 중..."):
@@ -256,10 +320,10 @@ def show():
                         section = doc.sections[0]
                         section.top_margin = Inches(1)
                         section.bottom_margin = Inches(1)
-                        section.left_margin = Inches(1)
-                        section.right_margin = Inches(1)
+                        section.left_margin = Inches(0.8)
+                        section.right_margin = Inches(0.8)
 
-                        # 제목
+                        # ── 제목 ──
                         title_p = doc.add_paragraph()
                         title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         t_run = title_p.add_run(report_title.strip())
@@ -274,16 +338,35 @@ def show():
                         d_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
                         doc.add_paragraph()
 
-                        # 표
-                        headers = ["번호", "구매날짜", "물품명", "규격", "수량", "거래처명", "구매자명"]
+                        # ── 기본 정보 (구매날짜 / 거래처 / 구매자명) ──
+                        def add_info_row(label, value):
+                            p = doc.add_paragraph()
+                            label_run = p.add_run(f"{label}: ")
+                            label_run.bold = True
+                            label_run.font.size = Pt(11)
+                            val_run = p.add_run(value)
+                            val_run.font.size = Pt(11)
+
+                        add_info_row("구매날짜", purchase_date.strftime("%Y년 %m월 %d일"))
+                        add_info_row("거래처명", store_name)
+                        add_info_row("구매자명", buyer_name)
+                        doc.add_paragraph()
+
+                        # ── 표 ──
+                        headers = ["번호", "품명", "규격", "단위", "수량", "단가", "금액", "통화", "검사항목", "검사결과", "검사일자", "비고"]
                         aligns = [
-                            WD_ALIGN_PARAGRAPH.CENTER,
-                            WD_ALIGN_PARAGRAPH.CENTER,
-                            WD_ALIGN_PARAGRAPH.LEFT,
-                            WD_ALIGN_PARAGRAPH.CENTER,
-                            WD_ALIGN_PARAGRAPH.CENTER,
-                            WD_ALIGN_PARAGRAPH.CENTER,
-                            WD_ALIGN_PARAGRAPH.CENTER,
+                            WD_ALIGN_PARAGRAPH.CENTER,  # 번호
+                            WD_ALIGN_PARAGRAPH.LEFT,    # 품명
+                            WD_ALIGN_PARAGRAPH.CENTER,  # 규격
+                            WD_ALIGN_PARAGRAPH.CENTER,  # 단위
+                            WD_ALIGN_PARAGRAPH.CENTER,  # 수량
+                            WD_ALIGN_PARAGRAPH.RIGHT,   # 단가
+                            WD_ALIGN_PARAGRAPH.RIGHT,   # 금액
+                            WD_ALIGN_PARAGRAPH.CENTER,  # 통화
+                            WD_ALIGN_PARAGRAPH.LEFT,    # 검사항목
+                            WD_ALIGN_PARAGRAPH.CENTER,  # 검사결과
+                            WD_ALIGN_PARAGRAPH.CENTER,  # 검사일자
+                            WD_ALIGN_PARAGRAPH.LEFT,    # 비고
                         ]
 
                         table = doc.add_table(rows=1, cols=len(headers))
@@ -296,7 +379,7 @@ def show():
                             cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
                             run = cell.paragraphs[0].add_run(h)
                             run.bold = True
-                            run.font.size = Pt(10)
+                            run.font.size = Pt(9)
                             tcPr = cell._tc.get_or_add_tcPr()
                             shd = OxmlElement('w:shd')
                             shd.set(qn('w:val'), 'clear')
@@ -305,29 +388,32 @@ def show():
                             tcPr.append(shd)
 
                         # 데이터 행
-                        items = st.session_state.receipt_items
-                        for i, item in enumerate(items):
+                        for i, item in enumerate(st.session_state.receipt_items):
                             row = table.add_row()
                             try:
-                                d = datetime.strptime(item["구매날짜"], "%Y-%m-%d")
-                                date_str = d.strftime("%Y.%m.%d")
+                                insp_date = datetime.strptime(item["검사일자"], "%Y-%m-%d").strftime("%Y.%m.%d")
                             except:
-                                date_str = item["구매날짜"]
+                                insp_date = item.get("검사일자", "")
 
                             vals = [
                                 str(i + 1),
-                                date_str,
                                 item["물품명"],
                                 item["규격"],
+                                item["단위"],
                                 str(item["수량"]),
-                                item["거래처명"],
-                                item["구매자명"],
+                                f"{int(item['단가']):,}",
+                                f"{int(item['금액']):,}",
+                                item["통화"],
+                                item["검사항목"],
+                                item["검사결과"],
+                                insp_date,
+                                item["비고"],
                             ]
                             for j, (v, a) in enumerate(zip(vals, aligns)):
                                 cell = row.cells[j]
                                 cell.paragraphs[0].alignment = a
                                 run = cell.paragraphs[0].add_run(v)
-                                run.font.size = Pt(10)
+                                run.font.size = Pt(9)
 
                         doc_buffer = io.BytesIO()
                         doc.save(doc_buffer)

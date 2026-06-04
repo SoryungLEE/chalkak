@@ -4,88 +4,312 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
-from PIL import Image
+from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 import io
 import base64
 import json
 import requests
+import re
 from datetime import datetime
 
 
 def fix_orientation(img):
+    """EXIF 회전값을 실제 픽셀에 반영합니다."""
     try:
-        exif_data = img._getexif()
-        if exif_data and 274 in exif_data:
-            orientation = exif_data[274]
-            rotations = {3: 180, 6: 270, 8: 90}
-            if orientation in rotations:
-                img = img.rotate(rotations[orientation], expand=True)
-    except:
-        pass
-    return img
+        return ImageOps.exif_transpose(img)
+    except Exception:
+        return img
 
 
-def img_to_base64(img):
-    img = fix_orientation(img)
+def _resize_for_vision(img, min_width=1200, max_side=3500):
+    """
+    영수증 사진은 폭이 너무 작으면 품명/수량 열을 모델이 자주 틀립니다.
+    311px 같은 작은 이미지는 먼저 키우고, 너무 큰 이미지는 API 비용/오류를 막기 위해 줄입니다.
+    """
+    w, h = img.size
 
-    max_side = 2000
+    if w < min_width:
+        ratio = min_width / w
+        img = img.resize((int(w * ratio), int(h * ratio)), Image.Resampling.LANCZOS)
+
     w, h = img.size
     if max(w, h) > max_side:
         ratio = max_side / max(w, h)
-        img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+        img = img.resize((int(w * ratio), int(h * ratio)), Image.Resampling.LANCZOS)
 
+    return img
+
+
+def make_receipt_vision_images(img):
+    """
+    모델에 2장을 보냅니다.
+    1) 원본 보정본: 색/배경 맥락 유지
+    2) 흑백 강조본: 작은 글씨/숫자열 판독 강화
+    """
+    img = fix_orientation(img).convert("RGB")
+    color = _resize_for_vision(img)
+
+    gray = ImageOps.grayscale(color)
+    gray = ImageOps.autocontrast(gray, cutoff=1)
+    gray = ImageEnhance.Contrast(gray).enhance(1.8)
+    gray = gray.filter(ImageFilter.UnsharpMask(radius=1, percent=170, threshold=3))
+    gray = gray.convert("RGB")
+
+    return color, gray
+
+
+def image_to_data_url(img, fmt="JPEG", quality=95):
     buf = io.BytesIO()
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
-    img.save(buf, format="JPEG", quality=90)
-    return base64.b64encode(buf.getvalue()).decode()
+    img.save(buf, format=fmt, quality=quality, optimize=True)
+    mime = "image/jpeg" if fmt.upper() == "JPEG" else "image/png"
+    return f"data:{mime};base64,{base64.b64encode(buf.getvalue()).decode('utf-8')}"
+
+
+# 기존 다른 코드가 img_to_base64를 호출해도 깨지지 않게 유지
+# 단, read_receipt_with_ai에서는 data URL을 직접 사용합니다.
+def img_to_base64(img):
+    color, _ = make_receipt_vision_images(img)
+    buf = io.BytesIO()
+    color.save(buf, format="JPEG", quality=95, optimize=True)
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+RECEIPT_SCHEMA = {
+    "name": "korean_receipt_extraction",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "store": {"type": "string"},
+            "date": {"type": "string"},
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "raw_line": {"type": "string"},
+                        "name": {"type": "string"},
+                        "spec": {"type": "string"},
+                        "quantity": {"type": "integer"},
+                        "unit_price": {"type": "integer"},
+                        "amount": {"type": "integer"},
+                    },
+                    "required": ["raw_line", "name", "spec", "quantity", "unit_price", "amount"],
+                    "additionalProperties": False,
+                },
+            },
+            "warnings": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+        },
+        "required": ["store", "date", "items", "warnings"],
+        "additionalProperties": False,
+    },
+}
+
+
+RECEIPT_PROMPT = """너는 한국 영수증 상품행 추출기다. 반드시 JSON만 반환한다.
+
+핵심 목표:
+- 영수증의 상품 구매 행만 추출한다.
+- 상품행의 오른쪽 끝 숫자 3개 열은 보통 [단가] [수량] [금액] 순서다.
+- 단가 × 수량 = 금액 검증이 되는 행만 items에 넣는다.
+
+매우 중요한 규칙:
+1. 상품명은 오른쪽 끝의 숫자 3개 열(단가/수량/금액)을 제거한 왼쪽 전체 문자열이다.
+2. 상품명 안의 숫자, 괄호, 크기, 수량 표기처럼 보이는 문자는 절대 수량/규격으로 떼지 마라.
+   예: "도트냅킨(21*21cm)20 1,000 1 1,000"이면
+       name="도트냅킨(21*21cm)20", unit_price=1000, quantity=1, amount=1000, spec=""
+   예: "신지카드종이컵25P(21 1,000 12 12,000"이면
+       name="신지카드종이컵25P(21", unit_price=1000, quantity=12, amount=12000, spec=""
+3. 다이소 영수증처럼 별도 '규격' 열이 없는 경우 spec은 빈 문자열로 둔다.
+   상품명 안의 20, 25P, 21*21cm, 괄호 안 숫자는 spec으로 빼지 말고 name에 그대로 둔다.
+4. raw_line에는 해당 상품행의 원문 한 줄을 오른쪽 숫자 3개까지 포함해 적는다.
+   다음 줄의 [ 1002504 ] 같은 바코드번호는 raw_line에도 넣지 않는다.
+5. [ 숫자 ] 형태의 바코드 행, 과세합계, 부가세, 판매합계, 봉투, 포인트, 신용카드, 승인번호, 영수증 안내문은 items에 넣지 않는다.
+6. 숫자는 콤마와 원 표시 없이 정수로 반환한다.
+7. 날짜는 가능하면 YYYY-MM-DD 형식으로 반환한다. 날짜가 불확실하면 빈 문자열.
+8. 애매하거나 단가×수량=금액이 맞지 않는 행은 items에 넣지 말고 warnings에 이유를 남긴다.
+
+반환 JSON 구조:
+{
+  "store": "거래처명",
+  "date": "YYYY-MM-DD",
+  "items": [
+    {
+      "raw_line": "상품행 원문",
+      "name": "상품명",
+      "spec": "",
+      "quantity": 1,
+      "unit_price": 1000,
+      "amount": 1000
+    }
+  ],
+  "warnings": []
+}
+"""
+
+
+_AMOUNT_TOKEN = r"(?:\d{1,3}(?:,\d{3})+|\d+)"
+_ITEM_LINE_RE = re.compile(
+    rf"^\s*(?P<name>.+?)\s+(?P<unit>{_AMOUNT_TOKEN})\s+(?P<qty>\d+)\s+(?P<amount>{_AMOUNT_TOKEN})\s*$"
+)
+_EXCLUDE_NAME_RE = re.compile(
+    r"(과세\s*합계|부가\s*세|판매\s*합계|총\s*합계|합\s*계|봉투|포인트|신용\s*카드|체크\s*카드|현금|거스름|승인|영수증|교환|환불|멤버십|사업자|대표|전화|POS)",
+    re.IGNORECASE,
+)
+
+
+def _clean_space(value):
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _to_int(value):
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(round(value))
+    s = re.sub(r"[^0-9]", "", str(value or ""))
+    return int(s) if s else 0
+
+
+def _normalize_date(value):
+    s = str(value or "")
+    m = re.search(r"(20\d{2})\D+(\d{1,2})\D+(\d{1,2})", s)
+    if m:
+        y, mo, d = map(int, m.groups())
+        return f"{y:04d}-{mo:02d}-{d:02d}"
+    m = re.search(r"(\d{2})[./-](\d{1,2})[./-](\d{1,2})", s)
+    if m:
+        yy, mo, d = map(int, m.groups())
+        return f"20{yy:02d}-{mo:02d}-{d:02d}"
+    return ""
+
+
+def _parse_item_raw_line(raw_line):
+    """
+    모델이 raw_line만 제대로 읽으면, 품명/단가/수량/금액은 코드가 확정한다.
+    이게 '단가 1,000 / 수량 7 / 금액 7,000'을 '단가 7,000 / 수량 1'로 뒤집는 문제를 막는다.
+    """
+    raw = _clean_space(raw_line)
+    if not raw:
+        return None
+
+    raw = raw.replace("원", "")
+    m = _ITEM_LINE_RE.match(raw)
+    if not m:
+        return None
+
+    name = _clean_space(m.group("name"))
+    unit_price = _to_int(m.group("unit"))
+    quantity = _to_int(m.group("qty"))
+    amount = _to_int(m.group("amount"))
+
+    if not name or _EXCLUDE_NAME_RE.search(name):
+        return None
+    if unit_price <= 0 or quantity <= 0 or amount <= 0:
+        return None
+    if unit_price * quantity != amount:
+        return None
+
+    return {
+        "raw_line": raw,
+        "name": name,
+        "spec": "",
+        "quantity": quantity,
+        "unit_price": unit_price,
+        "amount": amount,
+    }
+
+
+def _normalize_receipt_result(data):
+    warnings = list(data.get("warnings") or [])
+    normalized = {
+        "store": _clean_space(data.get("store", "")),
+        "date": _normalize_date(data.get("date", "")),
+        "items": [],
+        "warnings": warnings,
+    }
+
+    seen = set()
+    for item in data.get("items", []) or []:
+        raw_line = item.get("raw_line", "")
+        parsed = _parse_item_raw_line(raw_line)
+
+        # raw_line 파싱이 안 될 때만 모델이 나눈 필드를 사용하되, 검증 실패하면 버린다.
+        if parsed is None:
+            name = _clean_space(item.get("name", ""))
+            spec = _clean_space(item.get("spec", ""))
+            unit_price = _to_int(item.get("unit_price"))
+            quantity = _to_int(item.get("quantity"))
+            amount = _to_int(item.get("amount"))
+
+            if not name or _EXCLUDE_NAME_RE.search(name):
+                continue
+            if unit_price <= 0 or quantity <= 0 or amount <= 0:
+                normalized["warnings"].append(f"숫자 부족으로 제외: {raw_line or name}")
+                continue
+            if unit_price * quantity != amount:
+                normalized["warnings"].append(
+                    f"금액 검증 실패로 제외: {raw_line or name} / {unit_price}*{quantity}!={amount}"
+                )
+                continue
+
+            # 규격이 단순 숫자/괄호/크기만 있으면 대부분 상품명에서 잘못 뜯어낸 값이라 비운다.
+            if re.fullmatch(r"[0-9A-Za-z가-힣()*/.*\-\s]{1,20}", spec) and not re.search(r"규격|SIZE|호|형", spec, re.IGNORECASE):
+                spec = ""
+
+            parsed = {
+                "raw_line": _clean_space(raw_line),
+                "name": name,
+                "spec": spec,
+                "quantity": quantity,
+                "unit_price": unit_price,
+                "amount": amount,
+            }
+
+        key = (parsed["name"], parsed["quantity"], parsed["unit_price"], parsed["amount"])
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized["items"].append(parsed)
+
+    return normalized
 
 
 def read_receipt_with_ai(img):
-    b64 = img_to_base64(img)
+    color_img, contrast_img = make_receipt_vision_images(img)
+    color_url = image_to_data_url(color_img)
+    contrast_url = image_to_data_url(contrast_img)
     api_key = st.secrets["OPENAI_API_KEY"]
 
     payload = {
-        "model": "gpt-4o",
-        "max_tokens": 1500,
-        "messages": [{
-            "role": "user",
-            "content": [
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
-                },
-                {
-                    "type": "text",
-                    "text": """이 이미지는 구매영수증입니다. 이미지가 회전되어 있을 수 있으니 모든 방향에서 텍스트를 읽어주세요.
-
-[1단계] 이미지에 보이는 모든 텍스트를 빠짐없이 그대로 읽어내세요. 숫자, 한글, 영문, 기호 전부 포함합니다.
-
-[2단계] 읽어낸 텍스트에서 아래 정보를 파악하세요:
-- 어떤 숫자가 단가인지, 수량인지, 합계금액인지 — 단가×수량=금액 관계로 검증하세요.
-- 품명은 숫자가 아닌 텍스트 부분입니다. 바코드번호([ 숫자 ] 형태)는 품명이 아닙니다.
-- 거래처명, 날짜가 어디 있는지 찾으세요.
-
-[3단계] 반드시 아래 JSON 형식으로만 응답하세요. 다른 텍스트는 절대 포함하지 마세요.
-
-{
-  "store": "거래처명",
-  "date": "YYYY-MM-DD (없으면 빈 문자열)",
-  "items": [
-    {"name": "품명", "spec": "규격(없으면 빈 문자열)", "quantity": 수량숫자, "unit_price": 단가숫자, "amount": 금액숫자}
-  ]
-}
-
-절대 지켜야 할 규칙:
-- 품명은 이미지에 보이는 텍스트를 그대로 복사할 것. 절대 수정하거나 완성하거나 번역하지 말 것. 잘려있으면 잘린 그대로 넣을 것.
-- 수량은 이미지에 명확히 보이는 숫자만 넣을 것. 추론하거나 계산으로 유추하지 말 것. 안 보이면 1.
-- 단가×수량=금액이 맞는지 반드시 검증 후 넣을 것.
-- 합계, 배송비, 부가세, 바코드번호는 items에 넣지 말 것.
-- 금액은 숫자만 (콤마, 원 없이).
-- items는 반드시 1개 이상."""
-                }
-            ]
-        }]
+        "model": "gpt-4o-2024-08-06",
+        "temperature": 0,
+        "max_tokens": 1800,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": RECEIPT_SCHEMA,
+        },
+        "messages": [
+            {
+                "role": "system",
+                "content": "너는 한국 영수증에서 상품행만 정확히 추출하는 데이터 추출기다. 추측하지 말고 보이는 내용과 산술 검증만 사용한다.",
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": RECEIPT_PROMPT + "\n첫 번째 이미지는 원본 보정본, 두 번째 이미지는 흑백 대비 강화본이다. 둘을 대조해서 읽어라."},
+                    {"type": "image_url", "image_url": {"url": color_url, "detail": "high"}},
+                    {"type": "image_url", "image_url": {"url": contrast_url, "detail": "high"}},
+                ],
+            },
+        ],
     }
 
     try:
@@ -93,18 +317,35 @@ def read_receipt_with_ai(img):
             "https://api.openai.com/v1/chat/completions",
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}"
+                "Authorization": f"Bearer {api_key}",
             },
             json=payload,
-            timeout=30
+            timeout=60,
         )
+        res.raise_for_status()
         res_json = res.json()
-        if "choices" not in res_json:
-            return None, f"API 오류: {str(res_json)[:200]}"
-        text = res_json["choices"][0]["message"]["content"].strip()
-        text = text.replace("```json", "").replace("```", "").strip()
+
+        choice = (res_json.get("choices") or [{}])[0]
+        message = choice.get("message", {})
+        if message.get("refusal"):
+            return None, f"모델 거절: {message['refusal']}"
+
+        text = (message.get("content") or "").strip()
+        if not text:
+            return None, f"빈 응답: {str(res_json)[:300]}"
+
         parsed = json.loads(text)
+        parsed = _normalize_receipt_result(parsed)
+        if not parsed["items"]:
+            return None, "상품행을 검증하지 못했습니다. 사진을 더 가까이/선명하게 찍거나 수동 입력해 주세요."
         return parsed, None
+
+    except requests.exceptions.HTTPError as e:
+        try:
+            detail = res.json()
+        except Exception:
+            detail = res.text
+        return None, f"API HTTP 오류: {e} / {str(detail)[:500]}"
     except Exception as e:
         return None, str(e)
 
@@ -142,6 +383,8 @@ def show():
         st.session_state.analyzed = False
     if "confirmed" not in st.session_state:
         st.session_state.confirmed = False
+    if "receipt_warnings" not in st.session_state:
+        st.session_state.receipt_warnings = []
 
     current_name = uploaded_file.name if uploaded_file else None
     if current_name != st.session_state.last_uploaded:
@@ -149,6 +392,7 @@ def show():
         st.session_state.receipt_meta = {"store": "", "date": ""}
         st.session_state.analyzed = False
         st.session_state.confirmed = False
+        st.session_state.receipt_warnings = []
         st.session_state.img_rotation = 0
         st.session_state.last_uploaded = current_name
 
@@ -200,6 +444,11 @@ def show():
                         ]
                         st.session_state.analyzed = True
                         st.session_state.confirmed = False
+                        st.session_state.receipt_warnings = result.get("warnings", [])
+                        if st.session_state.receipt_warnings:
+                            st.warning("⚠️ 일부 줄은 금액 검증 실패/불확실로 제외했어요. 아래 경고를 확인하세요.")
+                            with st.expander("AI 검증 경고 보기"):
+                                st.write(st.session_state.receipt_warnings)
                         st.success(f"✅ {len(st.session_state.receipt_items)}개 항목을 읽었어요!")
                     else:
                         st.error("❌ 항목을 읽지 못했어요.")

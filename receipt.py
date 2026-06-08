@@ -14,6 +14,7 @@ import os
 import subprocess
 import tempfile
 import zipfile
+import uuid
 from datetime import datetime
 from xml.sax.saxutils import escape
 
@@ -463,6 +464,17 @@ def _safe_filename(value):
     return safe or "물품보고서"
 
 
+def _new_receipt_row_id():
+    return uuid.uuid4().hex
+
+
+def _ensure_receipt_row_ids(items):
+    for item in items:
+        if not item.get("_row_id"):
+            item["_row_id"] = _new_receipt_row_id()
+    return items
+
+
 def _get_openai_key():
     try:
         return st.secrets.get("OPENAI_API_KEY", "")
@@ -800,6 +812,7 @@ def show():
                         today = datetime.today().strftime("%Y-%m-%d")
                         st.session_state.receipt_items = [
                             {
+                                "_row_id": _new_receipt_row_id(),
                                 "물품명": item.get("name", ""),
                                 "규격": item.get("spec", "") or "-",
                                 "단위": "개",
@@ -862,35 +875,38 @@ def show():
         for hc, hl in zip(hcols, h_labels):
             hc.markdown(f"**{hl}**")
 
+        _ensure_receipt_row_ids(st.session_state.receipt_items)
         updated_items = []
-        to_delete = []
+        to_delete_ids = set()
         for i, item in enumerate(st.session_state.receipt_items):
+            row_id = item["_row_id"]
             c = st.columns(cols_w)
             with c[0]:
-                name = st.text_input("물품명", value=item.get("물품명", ""), key=f"name_{i}", label_visibility="collapsed", disabled=locked)
+                name = st.text_input("물품명", value=item.get("물품명", ""), key=f"name_{row_id}", label_visibility="collapsed", disabled=locked)
             with c[1]:
-                spec = st.text_input("규격", value=item.get("규격", "-"), key=f"spec_{i}", label_visibility="collapsed", disabled=locked)
+                spec = st.text_input("규격", value=item.get("규격", "-"), key=f"spec_{row_id}", label_visibility="collapsed", disabled=locked)
             with c[2]:
-                unit = st.text_input("단위", value=item.get("단위", "개"), key=f"unit_{i}", label_visibility="collapsed", disabled=locked)
+                unit = st.text_input("단위", value=item.get("단위", "개"), key=f"unit_{row_id}", label_visibility="collapsed", disabled=locked)
             with c[3]:
-                qty = st.number_input("수량", value=int(item.get("수량", 1)), min_value=1, key=f"qty_{i}", label_visibility="collapsed", disabled=locked)
+                qty = st.number_input("수량", value=int(item.get("수량", 1)), min_value=1, key=f"qty_{row_id}", label_visibility="collapsed", disabled=locked)
             with c[4]:
-                amount = st.number_input("금액", value=int(item.get("금액", 0)), min_value=0, key=f"amount_{i}", label_visibility="collapsed", disabled=locked)
+                amount = st.number_input("금액", value=int(item.get("금액", 0)), min_value=0, key=f"amount_{row_id}", label_visibility="collapsed", disabled=locked)
             with c[5]:
-                insp_item = st.text_input("검사항목", value=item.get("검사항목", DEFAULT_INSPECTION_ITEM), key=f"insp_{i}", label_visibility="collapsed", disabled=locked)
+                insp_item = st.text_input("검사항목", value=item.get("검사항목", DEFAULT_INSPECTION_ITEM), key=f"insp_{row_id}", label_visibility="collapsed", disabled=locked)
             with c[6]:
-                insp_result = st.text_input("검사결과", value=item.get("검사결과", DEFAULT_INSPECTION_RESULT), key=f"iresult_{i}", label_visibility="collapsed", disabled=locked)
+                insp_result = st.text_input("검사결과", value=item.get("검사결과", DEFAULT_INSPECTION_RESULT), key=f"iresult_{row_id}", label_visibility="collapsed", disabled=locked)
             with c[7]:
                 try:
                     insp_value = datetime.strptime(item.get("검사일자", ""), "%Y-%m-%d").date()
                 except Exception:
                     insp_value = datetime.today().date()
-                insp_date = st.date_input("검사일자", value=insp_value, key=f"idate_{i}", label_visibility="collapsed", disabled=locked)
+                insp_date = st.date_input("검사일자", value=insp_value, key=f"idate_{row_id}", label_visibility="collapsed", disabled=locked)
             with c[8]:
-                if not locked and st.button("🗑️", key=f"del_{i}"):
-                    to_delete.append(i)
+                if not locked and st.button("🗑️", key=f"del_{row_id}"):
+                    to_delete_ids.add(row_id)
 
             updated_items.append({
+                "_row_id": row_id,
                 "물품명": name,
                 "규격": spec if str(spec).strip() else "-",
                 "단위": unit,
@@ -901,14 +917,15 @@ def show():
                 "검사일자": insp_date.strftime("%Y-%m-%d"),
             })
 
-        if to_delete:
-            st.session_state.receipt_items = [it for idx, it in enumerate(updated_items) if idx not in to_delete]
+        if to_delete_ids:
+            st.session_state.receipt_items = [it for it in updated_items if it["_row_id"] not in to_delete_ids]
             st.rerun()
         else:
             st.session_state.receipt_items = updated_items
 
         if not locked and st.button("➕ 항목 추가"):
             st.session_state.receipt_items.append({
+                "_row_id": _new_receipt_row_id(),
                 "물품명": "",
                 "규격": "-",
                 "단위": "개",
@@ -924,7 +941,11 @@ def show():
         st.subheader("📄 다운로드 미리보기")
         st.write(f"**상호명:** {store_name or '-'}")
         st.write(f"**구매날짜:** {purchase_date.strftime('%Y-%m-%d')}")
-        st.dataframe(st.session_state.receipt_items, width="stretch", hide_index=True)
+        preview_items = [
+            {k: v for k, v in item.items() if k != "_row_id"}
+            for item in st.session_state.receipt_items
+        ]
+        st.dataframe(preview_items, width="stretch", hide_index=True)
 
         st.divider()
         if not locked:

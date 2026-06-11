@@ -3,6 +3,8 @@ import streamlit.components.v1 as components
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import base64
 import html
@@ -59,6 +61,20 @@ def _draw_center(draw, y, text, font, fill):
     draw.text((x, y), text, font=font, fill=fill)
 
 
+def _set_run_font(run, name="맑은 고딕"):
+    """라틴·한글·동아시아 폰트를 모두 동일하게 지정해 한글 깨짐을 방지합니다."""
+    run.font.name = name
+    rPr = run._r.get_or_add_rPr()
+    rFonts = rPr.find(qn("w:rFonts"))
+    if rFonts is None:
+        rFonts = OxmlElement("w:rFonts")
+        rPr.insert(0, rFonts)
+    rFonts.set(qn("w:ascii"), name)
+    rFonts.set(qn("w:hAnsi"), name)
+    rFonts.set(qn("w:eastAsia"), name)
+    rFonts.set(qn("w:cs"), name)
+
+
 def build_photo_docx(meeting_name, meeting_date, images):
     doc = Document()
     section = doc.sections[0]
@@ -73,12 +89,14 @@ def build_photo_docx(meeting_name, meeting_date, images):
     run.bold = True
     run.font.size = Pt(22)
     run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+    _set_run_font(run)
 
     date_p = doc.add_paragraph()
     date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     date_run = date_p.add_run(meeting_date.strftime("%Y년 %m월 %d일"))
     date_run.font.size = Pt(11)
     date_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+    _set_run_font(date_run)
     doc.add_paragraph()
 
     page_width = Inches(6.0)
@@ -102,6 +120,7 @@ def build_photo_docx(meeting_name, meeting_date, images):
             caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
             caption.runs[0].font.size = Pt(9)
             caption.runs[0].font.color.rgb = RGBColor(0xAA, 0xAA, 0xAA)
+            _set_run_font(caption.runs[0])
             doc.add_paragraph()
             if (i + 1) % PHOTOS_PER_PAGE == 0 and (i + 1) < len(images):
                 doc.add_page_break()
@@ -276,7 +295,6 @@ def show():
             with st.spinner("문서를 생성하는 중..."):
                 try:
                     doc_buffer = build_photo_docx(meeting_name, meeting_date, images)
-                    pdf_buffer = build_photo_pdf(meeting_name, meeting_date, images)
 
                     date_filename = meeting_date.strftime("%Y%m%d")
                     safe_name = _safe_filename(meeting_name)

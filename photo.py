@@ -272,7 +272,7 @@ def show():
         if not images:
             st.caption("사진을 최소 1장 이상 업로드해야 파일을 생성할 수 있습니다.")
     else:
-        if st.button("📄 DOCX/PDF 파일 생성", type="primary", width="stretch"):
+        if st.button("📄 DOCX 파일 생성", type="primary", width="stretch"):
             with st.spinner("문서를 생성하는 중..."):
                 try:
                     doc_buffer = build_photo_docx(meeting_name, meeting_date, images)
@@ -283,7 +283,7 @@ def show():
                     base_filename = f"{safe_name}_{date_filename}_사진대지"
 
                     st.success("✅ 문서가 생성되었어요!")
-                    col_docx, col_pdf = st.columns(2)
+                    col_docx = st.columns(1)
                     with col_docx:
                         st.download_button(
                             label="⬇️ DOCX 다운로드",

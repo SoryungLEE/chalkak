@@ -283,15 +283,15 @@ def show():
                     base_filename = f"{safe_name}_{date_filename}_사진대지"
 
                     st.success("✅ 문서가 생성되었어요!")
-                    col_docx = st.columns(1)
-                    with col_docx:
-                        st.download_button(
-                            label="⬇️ DOCX 다운로드",
-                            data=doc_buffer,
-                            file_name=f"{base_filename}.docx",
-                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                            width="stretch",
-                        )
+                    # col_docx = st.columns(1)
+                    # with col_docx:
+                    st.download_button(
+                        label="⬇️ DOCX 다운로드",
+                        data=doc_buffer,
+                        file_name=f"{base_filename}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        width="stretch",
+                    )
                     # with col_pdf:
                     #     st.download_button(
                     #         label="⬇️ PDF 다운로드",

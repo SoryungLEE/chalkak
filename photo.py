@@ -292,14 +292,14 @@ def show():
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             width="stretch",
                         )
-                    with col_pdf:
-                        st.download_button(
-                            label="⬇️ PDF 다운로드",
-                            data=pdf_buffer,
-                            file_name=f"{base_filename}.pdf",
-                            mime="application/pdf",
-                            width="stretch",
-                        )
+                    # with col_pdf:
+                    #     st.download_button(
+                    #         label="⬇️ PDF 다운로드",
+                    #         data=pdf_buffer,
+                    #         file_name=f"{base_filename}.pdf",
+                    #         mime="application/pdf",
+                    #         width="stretch",
+                    #     )
                 except Exception as e:
                     st.error(f"오류: {str(e)}")
                     st.exception(e)

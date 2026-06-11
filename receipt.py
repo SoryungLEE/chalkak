@@ -542,6 +542,20 @@ def _receipt_headers():
     return ["물품명", "규격", "단위", "수량", "금액", "검사항목", "검사결과", "검사일자"]
 
 
+def _set_run_font(run, name="맑은 고딕"):
+    """라틴·한글·동아시아 폰트를 모두 동일하게 지정해 한글 깨짐을 방지합니다."""
+    run.font.name = name
+    rPr = run._r.get_or_add_rPr()
+    rFonts = rPr.find(qn("w:rFonts"))
+    if rFonts is None:
+        rFonts = OxmlElement("w:rFonts")
+        rPr.insert(0, rFonts)
+    rFonts.set(qn("w:ascii"), name)
+    rFonts.set(qn("w:hAnsi"), name)
+    rFonts.set(qn("w:eastAsia"), name)
+    rFonts.set(qn("w:cs"), name)
+
+
 def build_receipt_docx(report_title, report_date, purchase_date, store_name, items):
     doc = Document()
     section = doc.sections[0]
@@ -556,12 +570,14 @@ def build_receipt_docx(report_title, report_date, purchase_date, store_name, ite
     t_run.bold = True
     t_run.font.size = Pt(18)
     t_run.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+    _set_run_font(t_run)
 
     date_p = doc.add_paragraph()
     date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     d_run = date_p.add_run(report_date.strftime("%Y년 %m월 %d일"))
     d_run.font.size = Pt(11)
     d_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+    _set_run_font(d_run)
     doc.add_paragraph()
 
     def add_info_row(label, value):
@@ -569,8 +585,10 @@ def build_receipt_docx(report_title, report_date, purchase_date, store_name, ite
         label_run = p.add_run(f"{label}: ")
         label_run.bold = True
         label_run.font.size = Pt(11)
+        _set_run_font(label_run)
         val_run = p.add_run(str(value or ""))
         val_run.font.size = Pt(11)
+        _set_run_font(val_run)
 
     add_info_row("상호명", store_name)
     add_info_row("구매날짜", purchase_date.strftime("%Y년 %m월 %d일"))
@@ -586,6 +604,7 @@ def build_receipt_docx(report_title, report_date, purchase_date, store_name, ite
         run = cell.paragraphs[0].add_run(h)
         run.bold = True
         run.font.size = Pt(9)
+        _set_run_font(run)
         tcPr = cell._tc.get_or_add_tcPr()
         shd = OxmlElement("w:shd")
         shd.set(qn("w:val"), "clear")
@@ -601,6 +620,7 @@ def build_receipt_docx(report_title, report_date, purchase_date, store_name, ite
             cell.paragraphs[0].alignment = a
             run = cell.paragraphs[0].add_run(str(v))
             run.font.size = Pt(9)
+            _set_run_font(run)
 
     doc_buffer = io.BytesIO()
     doc.save(doc_buffer)

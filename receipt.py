@@ -4,7 +4,7 @@ from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
-from PIL import Image, ImageOps, ImageEnhance, ImageFilter, ImageDraw, ImageFont
+from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 import io
 import base64
 import json
@@ -455,8 +455,6 @@ def read_receipt_with_ai(img):
 
 DEFAULT_INSPECTION_ITEM = "물품상태 및 수량 등"
 DEFAULT_INSPECTION_RESULT = "이상없음"
-A4_WIDTH_PX = 1754
-A4_HEIGHT_PX = 1240
 
 
 def _safe_filename(value):
@@ -480,29 +478,6 @@ def _get_openai_key():
         return st.secrets.get("OPENAI_API_KEY", "")
     except Exception:
         return ""
-
-
-def _font(size, bold=False):
-    candidates = [
-        "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf" if bold else "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc" if bold else "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "C:/Windows/Fonts/malgunbd.ttf" if bold else "C:/Windows/Fonts/malgun.ttf",
-        "/Library/Fonts/AppleGothic.ttf",
-    ]
-    for path in candidates:
-        if path and os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, size=size)
-            except Exception:
-                continue
-    return ImageFont.load_default()
-
-
-def _draw_center(draw, y, text, font, fill=(26, 26, 46)):
-    bbox = draw.textbbox((0, 0), text, font=font)
-    x = (A4_WIDTH_PX - (bbox[2] - bbox[0])) / 2
-    draw.text((x, y), text, font=font, fill=fill)
 
 
 def read_receipt_with_tesseract(img):
@@ -679,57 +654,6 @@ def build_receipt_xlsx(report_title, report_date, purchase_date, store_name, ite
     return buffer
 
 
-def _draw_text(draw, xy, text, font, fill=(30, 30, 30)):
-    draw.text(xy, str(text or ""), font=font, fill=fill)
-
-
-def build_receipt_pdf(report_title, report_date, purchase_date, store_name, items):
-    title_font = _font(34, True)
-    normal_font = _font(20)
-    header_font = _font(17, True)
-    cell_font = _font(16)
-    page = Image.new("RGB", (A4_WIDTH_PX, A4_HEIGHT_PX), "white")
-    draw = ImageDraw.Draw(page)
-    y = 55
-    _draw_center(draw, y, report_title.strip(), title_font)
-    y += 55
-    _draw_text(draw, (70, y), f"보고서 날짜: {report_date.strftime('%Y-%m-%d')}", normal_font)
-    y += 32
-    _draw_text(draw, (70, y), f"상호명: {store_name or ''}", normal_font)
-    y += 32
-    _draw_text(draw, (70, y), f"구매날짜: {purchase_date.strftime('%Y-%m-%d')}", normal_font)
-    y += 55
-
-    headers = _receipt_headers()
-    widths = [360, 170, 100, 90, 150, 310, 150, 160]
-    x0 = 55
-    row_h = 48
-    x = x0
-    for header, width in zip(headers, widths):
-        draw.rectangle((x, y, x + width, y + row_h), fill=(232, 237, 245), outline=(120, 120, 120))
-        _draw_text(draw, (x + 8, y + 13), header, header_font)
-        x += width
-    y += row_h
-
-    for item in items:
-        if y + row_h > A4_HEIGHT_PX - 45:
-            break
-        values = [item.get("물품명", ""), item.get("규격", ""), item.get("단위", ""), str(item.get("수량", "")), f"{int(item.get('금액', 0)):,}", item.get("검사항목", ""), item.get("검사결과", ""), item.get("검사일자", "")]
-        x = x0
-        for value, width in zip(values, widths):
-            draw.rectangle((x, y, x + width, y + row_h), outline=(160, 160, 160))
-            text = str(value)
-            if len(text) > 22:
-                text = text[:21] + "…"
-            _draw_text(draw, (x + 8, y + 14), text, cell_font)
-            x += width
-        y += row_h
-
-    buffer = io.BytesIO()
-    page.save(buffer, format="PDF", resolution=150.0)
-    buffer.seek(0)
-    return buffer
-
 def show():
     if st.button("← 홈으로"):
         st.session_state.page = "home"
@@ -741,7 +665,7 @@ def show():
 
     st.title("🧾 영수증 물품보고서 생성기")
     st.caption("made by 찰칵혁신단")
-    st.markdown("영수증 사진을 올리면 OCR이 항목을 읽고, 사람이 확인·수정한 뒤 엑셀/PDF로 다운로드할 수 있습니다.")
+    st.markdown("영수증 사진을 올리면 OCR이 항목을 읽고, 사람이 확인·수정한 뒤 엑셀로 다운로드할 수 있습니다.")
     st.info("ℹ️ OpenAI API 크레딧이 없거나 API가 실패하면 로컬 Tesseract OCR을 시도합니다. 로컬 OCR은 서버에 Tesseract와 한국어 언어팩이 설치되어 있어야 하며 정확도가 낮을 수 있습니다.")
     st.divider()
 
@@ -959,7 +883,7 @@ def show():
                 st.rerun()
 
         st.divider()
-        if st.button("📄 DOCX/XLSX/PDF 파일 생성", type="primary", width="stretch", disabled=not st.session_state.confirmed):
+        if st.button("📄 DOCX/XLSX 파일 생성", type="primary", width="stretch", disabled=not st.session_state.confirmed):
             if not st.session_state.confirmed:
                 st.warning("⚠️ '이상없음을 확인' 체크박스를 먼저 체크해주세요.")
             elif not report_title.strip():
@@ -970,13 +894,12 @@ def show():
                         items = st.session_state.receipt_items
                         doc_buffer = build_receipt_docx(report_title, report_date, purchase_date, store_name, items)
                         xlsx_buffer = build_receipt_xlsx(report_title, report_date, purchase_date, store_name, items)
-                        pdf_buffer = build_receipt_pdf(report_title, report_date, purchase_date, store_name, items)
 
                         date_filename = report_date.strftime("%Y%m%d")
                         base_filename = f"{_safe_filename(report_title)}_{date_filename}_물품보고서"
 
                         st.success("✅ 파일이 생성되었어요!")
-                        col_docx, col_xlsx, col_pdf = st.columns(3)
+                        col_docx, col_xlsx = st.columns(2)
                         with col_docx:
                             st.download_button(
                                 label="⬇️ DOCX 다운로드",
@@ -991,14 +914,6 @@ def show():
                                 data=xlsx_buffer,
                                 file_name=f"{base_filename}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                width="stretch",
-                            )
-                        with col_pdf:
-                            st.download_button(
-                                label="⬇️ PDF 다운로드",
-                                data=pdf_buffer,
-                                file_name=f"{base_filename}.pdf",
-                                mime="application/pdf",
                                 width="stretch",
                             )
                     except Exception as e:
